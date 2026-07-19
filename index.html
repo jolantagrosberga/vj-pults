@@ -38,6 +38,7 @@
   #bgGrad{transition:background .9s ease;}
   #bgPhoto{background-size:cover;background-position:center;opacity:0;transition:opacity .7s ease;}
   #fxCanvas{width:100%;height:100%;opacity:0;transition:opacity .5s;}
+  #fxCanvasGL{width:100%;height:100%;opacity:0;transition:opacity .5s;}
   .imgLayer{background-size:cover;background-position:center;opacity:0;
     transition:opacity .5s ease;}
   .pulseSlow{animation:pl 16s ease-in-out infinite;}
@@ -89,6 +90,8 @@
     background:var(--orange);color:#fff;font-size:14px;cursor:pointer;}
   .track.playing .playBtn{background:var(--dark);box-shadow:0 0 0 3px var(--orange-light);}
   .track .tname{flex:1 1 auto;font-size:13px;font-weight:bold;}
+  .track .ttime{flex:0 0 auto;font-size:12px;color:var(--orange-light);font-weight:bold;
+    min-width:44px;text-align:right;font-variant-numeric:tabular-nums;}
   .track input[type=range]{width:64px;}
   .vizbar{width:5px;height:18px;background:rgba(255,255,255,.15);border-radius:3px;flex:0 0 auto;
     overflow:hidden;position:relative;}
@@ -140,6 +143,7 @@
       <div id="bgGrad"></div>
       <div id="bgPhoto"></div>
       <canvas id="fxCanvas"></canvas>
+      <canvas id="fxCanvasGL"></canvas>
       <div class="imgLayer" id="imgA"></div>
       <div class="imgLayer" id="imgB"></div>
       <canvas id="shapeCanvas"></canvas>
@@ -306,6 +310,7 @@
   const shapeCanvas=document.getElementById('shapeCanvas');
   const drawCanvas=document.getElementById('drawCanvas');
   const fxCanvas=document.getElementById('fxCanvas');
+  const fxCanvasGL=document.getElementById('fxCanvasGL');
   const sctx=shapeCanvas.getContext('2d');
   const dctx=drawCanvas.getContext('2d');
 
@@ -334,7 +339,7 @@
   }
   function relayout(){
     fitStage();
-    sizeCanvas(shapeCanvas); sizeCanvas(drawCanvas); sizeCanvas(fxCanvas);
+    sizeCanvas(shapeCanvas); sizeCanvas(drawCanvas); sizeCanvas(fxCanvas); sizeCanvas(fxCanvasGL);
     if(gridBuilt) buildGrid();
   }
   window.addEventListener('resize',relayout);
@@ -359,9 +364,17 @@
     const a=new Audio(t.file); a.loop=true; a.preload='none'; a.volume=.8;
     const row=document.createElement('div'); row.className='track';
     row.innerHTML=`<button class="playBtn">▶</button><div class="tname">${t.name}</div>
+      <div class="ttime">0:00</div>
       <div class="vizbar"><i></i></div><input type="range" min="0" max="100" value="80">`;
     trackList.appendChild(row);
-    trackState[t.id]={el:a,playing:false,bar:row.querySelector('.vizbar i'),analyser:null,data:null,src:null};
+    const timeEl=row.querySelector('.ttime');
+    trackState[t.id]={el:a,playing:false,bar:row.querySelector('.vizbar i'),analyser:null,data:null,src:null,timeEl};
+    function fmt(s){ if(!isFinite(s)||s<0)s=0; const m=Math.floor(s/60),ss=Math.floor(s%60); return m+':'+(ss<10?'0':'')+ss; }
+    a.addEventListener('timeupdate',()=>{
+      const rem=(a.duration||0)-a.currentTime;
+      timeEl.textContent='−'+fmt(rem);
+    });
+    a.addEventListener('loadedmetadata',()=>{ timeEl.textContent=fmt(a.duration); });
     row.querySelector('.playBtn').addEventListener('click',()=>{
       ensureCtx();
       const st=trackState[t.id];
@@ -447,7 +460,9 @@
 
   document.getElementById('fxColor').addEventListener('input',e=>{fxColor=e.target.value; if(fxMode==='thunder') setupThunder();});
   document.getElementById('fxOpacity').addEventListener('input',e=>{
-    fxCanvas.style.opacity = fxMode==='none'?0:e.target.value/100;
+    const op=fxMode==='none'?0:e.target.value/100;
+    if(fxMode==='grid') fxCanvas.style.opacity=op;
+    else if(fxMode==='thunder') fxCanvasGL.style.opacity=op;
   });
   makeSpeedPicker(document.getElementById('fxSpeed'),'med',v=>{fxSpeed=v==='slow'?.5:v==='fast'?2:1;});
 
@@ -459,12 +474,11 @@
     });
   });
   function setFx(mode){
-    if(glCtx && mode!=='thunder'){ glCtx=null; }
     fxMode=mode;
-    if(mode==='none'){ fxCanvas.style.opacity=0; return; }
-    fxCanvas.style.opacity=document.getElementById('fxOpacity').value/100;
-    if(mode==='grid'){ buildGrid(); }
-    if(mode==='thunder'){ setupThunder(); }
+    const op=document.getElementById('fxOpacity').value/100;
+    if(mode==='none'){ fxCanvas.style.opacity=0; fxCanvasGL.style.opacity=0; return; }
+    if(mode==='grid'){ fxCanvasGL.style.opacity=0; fxCanvas.style.opacity=op; buildGrid(); }
+    if(mode==='thunder'){ fxCanvas.style.opacity=0; setupThunder(); fxCanvasGL.style.opacity=glCtx?op:0; }
   }
   function buildGrid(){
     const GAP=Math.max(18, stage.clientWidth/28)*(window.devicePixelRatio||1);
@@ -544,8 +558,8 @@ gl_FragColor=vec4(eff,1.);}`;
 
   function setupThunder(){
     if(!glCtx){
-      glCtx=fxCanvas.getContext('webgl')||fxCanvas.getContext('experimental-webgl');
-      if(!glCtx){ fxMode='none'; fxCanvas.style.opacity=0; return; }
+      glCtx=fxCanvasGL.getContext('webgl')||fxCanvasGL.getContext('experimental-webgl');
+      if(!glCtx){ fxMode='none'; fxCanvasGL.style.opacity=0; return; }
       const gl=glCtx;
       function sh(src,type){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return s;}
       const vs=sh(VS,gl.VERTEX_SHADER), fs=sh(FS,gl.FRAGMENT_SHADER);
@@ -562,8 +576,8 @@ gl_FragColor=vec4(eff,1.);}`;
   }
   function drawThunder(energy){
     const gl=glCtx; if(!gl) return;
-    gl.viewport(0,0,fxCanvas.width,fxCanvas.height);
-    gl.uniform2f(glUni.res,fxCanvas.width,fxCanvas.height);
+    gl.viewport(0,0,fxCanvasGL.width,fxCanvasGL.height);
+    gl.uniform2f(glUni.res,fxCanvasGL.width,fxCanvasGL.height);
     gl.uniform1f(glUni.time,(performance.now()-glStart)/1000);
     const [r,g,b]=hexRGB(fxColor);
     gl.uniform3f(glUni.col,r/255,g/255,b/255);
