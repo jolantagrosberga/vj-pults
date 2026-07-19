@@ -169,14 +169,17 @@
       <div class="swatches" id="bgSwatches"></div>
       <div class="rowlabel">Foto fons</div>
       <div class="swatches" id="bgPhotos"></div>
+      <div class="sliderRow"><label>Foto caurspīdīgums</label><input type="range" id="bgPhotoOpacity" min="0" max="100" value="100"></div>
       <div class="rowlabel">Dzīvais fons (kustīgs efekts)</div>
       <div class="btngrid" id="fxChoices">
         <button class="choice selected" data-fx="none">Nav</button>
         <button class="choice" data-fx="grid">Kinētiskais režģis</button>
         <button class="choice" data-fx="thunder">Zibens</button>
+        <button class="choice" data-fx="dots">Punktu virsma</button>
+        <button class="choice" data-fx="plasma">Plazmas līnijas</button>
       </div>
       <div class="sliderRow"><label>Efekta krāsa</label><input type="color" id="fxColor" value="#e8722c"></div>
-      <div class="sliderRow"><label>Caurspīdīgums</label><input type="range" id="fxOpacity" min="10" max="100" value="90"></div>
+      <div class="sliderRow"><label>Efekta caurspīdīgums</label><input type="range" id="fxOpacity" min="10" max="100" value="90"></div>
       <div class="speedRow"><label>Kustības ātrums</label><div class="speedgrid" id="fxSpeed"></div></div>
       <p class="hint">Kinētiskais režģis reaģē uz pirkstu vai peles kustību uz skatuves.</p>
     </div>
@@ -341,6 +344,7 @@
     fitStage();
     sizeCanvas(shapeCanvas); sizeCanvas(drawCanvas); sizeCanvas(fxCanvas); sizeCanvas(fxCanvasGL);
     if(gridBuilt) buildGrid();
+    if(fxMode==='dots') buildDots();
   }
   window.addEventListener('resize',relayout);
   document.addEventListener('fullscreenchange',()=>setTimeout(relayout,180));
@@ -422,7 +426,7 @@
     const s=document.createElement('div');
     s.className='swatch'+(i===0?' selected':''); s.style.background=p.css; s.textContent=p.label;
     s.addEventListener('click',()=>{
-      bgGrad.style.background=p.css; bgPhoto.style.opacity=0;
+      bgGrad.style.background=p.css; bgPhoto.style.opacity=0; bgPhotoSet=false;
       [...bgSw.children].forEach(c=>c.classList.remove('selected'));
       [...bgPh.children].forEach(c=>c.classList.remove('selected'));
       s.classList.add('selected');
@@ -439,16 +443,22 @@
     {id:'fons-09',label:'Akvarelis'},{id:'fons-10',label:'Kalni'},
   ];
   const bgPh=document.getElementById('bgPhotos');
+  let bgPhotoSet=false, bgPhotoOp=1;
   BG_PHOTOS.forEach(p=>{
     const s=document.createElement('div');
     s.className='swatch'; s.style.backgroundImage=`url('${p.id}.jpg')`; s.title=p.label;
     s.addEventListener('click',()=>{
-      bgPhoto.style.backgroundImage=`url('${p.id}.jpg')`; bgPhoto.style.opacity=1;
+      bgPhoto.style.backgroundImage=`url('${p.id}.jpg')`;
+      bgPhotoSet=true; bgPhoto.style.opacity=bgPhotoOp;
       [...bgSw.children].forEach(c=>c.classList.remove('selected'));
       [...bgPh.children].forEach(c=>c.classList.remove('selected'));
       s.classList.add('selected');
     });
     bgPh.appendChild(s);
+  });
+  document.getElementById('bgPhotoOpacity').addEventListener('input',e=>{
+    bgPhotoOp=e.target.value/100;
+    if(bgPhotoSet) bgPhoto.style.opacity=bgPhotoOp;
   });
 
   /* ============ LIVE FX: KINETIC GRID + THUNDER ============ */
@@ -458,11 +468,11 @@
   const fx2d=fxCanvas.getContext('2d');
   let glCtx=null, glProg=null, glUni={}, glStart=0, glBuf=null;
 
-  document.getElementById('fxColor').addEventListener('input',e=>{fxColor=e.target.value; if(fxMode==='thunder') setupThunder();});
+  document.getElementById('fxColor').addEventListener('input',e=>{fxColor=e.target.value;});
   document.getElementById('fxOpacity').addEventListener('input',e=>{
     const op=fxMode==='none'?0:e.target.value/100;
-    if(fxMode==='grid') fxCanvas.style.opacity=op;
-    else if(fxMode==='thunder') fxCanvasGL.style.opacity=op;
+    if(fxMode==='grid'||fxMode==='dots') fxCanvas.style.opacity=op;
+    else if(fxMode==='thunder'||fxMode==='plasma') fxCanvasGL.style.opacity=op;
   });
   makeSpeedPicker(document.getElementById('fxSpeed'),'med',v=>{fxSpeed=v==='slow'?.5:v==='fast'?2:1;});
 
@@ -478,7 +488,9 @@
     const op=document.getElementById('fxOpacity').value/100;
     if(mode==='none'){ fxCanvas.style.opacity=0; fxCanvasGL.style.opacity=0; return; }
     if(mode==='grid'){ fxCanvasGL.style.opacity=0; fxCanvas.style.opacity=op; buildGrid(); }
-    if(mode==='thunder'){ fxCanvas.style.opacity=0; setupThunder(); fxCanvasGL.style.opacity=glCtx?op:0; }
+    else if(mode==='dots'){ fxCanvasGL.style.opacity=0; fxCanvas.style.opacity=op; buildDots(); }
+    else if(mode==='thunder'){ fxCanvas.style.opacity=0; setupGL('thunder'); fxCanvasGL.style.opacity=glCtx?op:0; }
+    else if(mode==='plasma'){ fxCanvas.style.opacity=0; setupGL('plasma'); fxCanvasGL.style.opacity=glCtx?op:0; }
   }
   function buildGrid(){
     const GAP=Math.max(18, stage.clientWidth/28)*(window.devicePixelRatio||1);
@@ -537,8 +549,45 @@
     fx2d.globalAlpha=1;
   }
 
-  const VS=`attribute vec2 aPosition;void main(){gl_Position=vec4(aPosition,0.,1.);}`;
-  const FS=`precision mediump float;
+  /* ---- PUNKTU VIRSMA (viļņots punktu režģis, 2D) ---- */
+  let dotGrid=[];
+  function buildDots(){
+    const dpr=window.devicePixelRatio||1;
+    const W=fxCanvas.width, H=fxCanvas.height;
+    const cols=40, rows=24;
+    dotGrid=[];
+    for(let ix=0;ix<cols;ix++){
+      for(let iy=0;iy<rows;iy++){
+        dotGrid.push({ix,iy,cols,rows});
+      }
+    }
+    dotGrid.meta={cols,rows,W,H,dpr};
+  }
+  let dotCount=0;
+  function drawDots(energy){
+    if(!dotGrid.meta) buildDots();
+    const {cols,rows}=dotGrid.meta;
+    const W=fxCanvas.width, H=fxCanvas.height, dpr=window.devicePixelRatio||1;
+    fx2d.clearRect(0,0,W,H);
+    const [cr,cg,cb]=hexRGB(fxColor);
+    const marginX=W*0.08, marginY=H*0.14;
+    const stepX=(W-marginX*2)/(cols-1);
+    const stepY=(H-marginY*2)/(rows-1);
+    const amp=(6+energy*22);
+    dotCount += 0.06*fxSpeed*(1+energy);
+    for(const d of dotGrid){
+      const wave=Math.sin((d.ix+dotCount)*0.3)+Math.sin((d.iy+dotCount)*0.5);
+      const px=marginX+d.ix*stepX;
+      const py=marginY+d.iy*stepY + wave*amp*dpr;
+      const sz=(1.4+ (wave+2)/4*1.8)*dpr;
+      fx2d.globalAlpha=0.35+((wave+2)/4)*0.55;
+      fx2d.fillStyle=`rgb(${cr},${cg},${cb})`;
+      fx2d.beginPath(); fx2d.arc(px,py,Math.max(0.8,sz),0,6.283); fx2d.fill();
+    }
+    fx2d.globalAlpha=1;
+  }
+
+  const FS_THUNDER=`precision mediump float;
 uniform vec2 iResolution;uniform float iTime;uniform vec3 uColor;uniform float uSpeed;
 #define OC 8
 float h11(float p){p=fract(p*.1031);p*=p+33.33;p*=p+p;return fract(p);}
@@ -556,25 +605,76 @@ float dist=abs(uv.x);
 vec3 eff=uColor*pow(mix(0.,.07,h11(iTime*uSpeed))/dist,1.)*0.46;
 gl_FragColor=vec4(eff,1.);}`;
 
-  function setupThunder(){
+  const FS_PLASMA=`precision highp float;
+uniform vec2 iResolution;uniform float iTime;uniform vec3 uColor;uniform float uSpeed;
+const float gridSmoothWidth=0.015;
+const float scale=5.0;
+const float minLineWidth=0.01;
+const float maxLineWidth=0.2;
+const float lineSpeed=0.2;
+const float lineAmplitude=1.0;
+const float lineFrequency=0.2;
+const float warpSpeed=0.04;
+const float warpFrequency=0.5;
+const float warpAmplitude=1.0;
+const float offsetFrequency=0.5;
+const float offsetSpeed=0.266;
+const float minOffsetSpread=0.6;
+const float maxOffsetSpread=2.0;
+const int linesPerGroup=16;
+#define dsl(pos,hw,t) smoothstep(hw,0.0,abs(pos-(t)))
+#define dcl(pos,hw,t) smoothstep(hw+gridSmoothWidth,hw,abs(pos-(t)))
+float rnd(float t){return (cos(t)+cos(t*1.3+1.3)+cos(t*1.4+1.4))/3.0;}
+float plasmaY(float x,float hf,float off){return rnd(x*lineFrequency+iTime*lineSpeed*uSpeed)*hf*lineAmplitude+off;}
+void main(){
+vec2 fc=gl_FragCoord.xy;
+vec2 uv=fc/iResolution.xy;
+vec2 space=(fc-iResolution.xy/2.0)/iResolution.x*2.0*scale;
+float hf=1.0-(cos(uv.x*6.28)*0.5+0.5);
+float vf=1.0-(cos(uv.y*6.28)*0.5+0.5);
+space.y+=rnd(space.x*warpFrequency+iTime*warpSpeed*uSpeed)*warpAmplitude*(0.5+hf);
+space.x+=rnd(space.y*warpFrequency+iTime*warpSpeed*uSpeed+2.0)*warpAmplitude*hf;
+vec3 lines=vec3(0.0);
+for(int l=0;l<linesPerGroup;l++){
+float ni=float(l)/float(linesPerGroup);
+float ot=iTime*offsetSpeed*uSpeed;
+float op=float(l)+space.x*offsetFrequency;
+float rand=rnd(op+ot)*0.5+0.5;
+float hw=mix(minLineWidth,maxLineWidth,rand*hf)/2.0;
+float off=rnd(op+ot*(1.0+ni))*mix(minOffsetSpread,maxOffsetSpread,hf);
+float lp=plasmaY(space.x,hf,off);
+float line=dsl(lp,hw,space.y)/2.0+dcl(lp,hw*0.15,space.y);
+lines+=line*uColor*rand;
+}
+vec3 col=lines*vf;
+gl_FragColor=vec4(col,1.0);}`;
+
+  let glShaderType=null;
+  function setupGL(type){
     if(!glCtx){
       glCtx=fxCanvasGL.getContext('webgl')||fxCanvasGL.getContext('experimental-webgl');
       if(!glCtx){ fxMode='none'; fxCanvasGL.style.opacity=0; return; }
       const gl=glCtx;
-      function sh(src,type){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return s;}
-      const vs=sh(VS,gl.VERTEX_SHADER), fs=sh(FS,gl.FRAGMENT_SHADER);
-      glProg=gl.createProgram(); gl.attachShader(glProg,vs); gl.attachShader(glProg,fs); gl.linkProgram(glProg);
-      gl.useProgram(glProg);
-      glUni={res:gl.getUniformLocation(glProg,'iResolution'),time:gl.getUniformLocation(glProg,'iTime'),
-        col:gl.getUniformLocation(glProg,'uColor'),spd:gl.getUniformLocation(glProg,'uSpeed')};
       glBuf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,glBuf);
       gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
-      const ap=gl.getAttribLocation(glProg,'aPosition');
-      gl.enableVertexAttribArray(ap); gl.vertexAttribPointer(ap,2,gl.FLOAT,false,0,0);
-      glStart=performance.now();
     }
+    if(glShaderType===type) return;
+    const gl=glCtx;
+    function sh(src,t){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+    const fsrc = type==='plasma' ? FS_PLASMA : FS_THUNDER;
+    const vs=sh(VS,gl.VERTEX_SHADER), fs=sh(fsrc,gl.FRAGMENT_SHADER);
+    if(glProg) gl.deleteProgram(glProg);
+    glProg=gl.createProgram(); gl.attachShader(glProg,vs); gl.attachShader(glProg,fs); gl.linkProgram(glProg);
+    gl.useProgram(glProg);
+    glUni={res:gl.getUniformLocation(glProg,'iResolution'),time:gl.getUniformLocation(glProg,'iTime'),
+      col:gl.getUniformLocation(glProg,'uColor'),spd:gl.getUniformLocation(glProg,'uSpeed')};
+    gl.bindBuffer(gl.ARRAY_BUFFER,glBuf);
+    const ap=gl.getAttribLocation(glProg,'aPosition');
+    gl.enableVertexAttribArray(ap); gl.vertexAttribPointer(ap,2,gl.FLOAT,false,0,0);
+    glStart=glStart||performance.now();
+    glShaderType=type;
   }
-  function drawThunder(energy){
+  function drawGL(energy){
     const gl=glCtx; if(!gl) return;
     gl.viewport(0,0,fxCanvasGL.width,fxCanvasGL.height);
     gl.uniform2f(glUni.res,fxCanvasGL.width,fxCanvasGL.height);
@@ -898,7 +998,8 @@ gl_FragColor=vec4(eff,1.);}`;
   function loop(){
     const energy=audioEnergy();
     if(fxMode==='grid') drawGrid(energy);
-    else if(fxMode==='thunder') drawThunder(energy);
+    else if(fxMode==='dots') drawDots(energy);
+    else if(fxMode==='thunder'||fxMode==='plasma') drawGL(energy);
     sctx.clearRect(0,0,shapeCanvas.width,shapeCanvas.height);
     if(shapeVisible) drawParticles(energy);
     applyDrift();
@@ -933,7 +1034,7 @@ gl_FragColor=vec4(eff,1.);}`;
     document.querySelectorAll('.track').forEach(r=>{
       r.classList.remove('playing'); r.querySelector('.playBtn').textContent='▶';
     });
-    bgGrad.style.background=BG_PRESETS[0].css; bgPhoto.style.opacity=0;
+    bgGrad.style.background=BG_PRESETS[0].css; bgPhoto.style.opacity=0; bgPhotoSet=false;
     [...bgSw.children].forEach((c,i)=>c.classList.toggle('selected',i===0));
     [...bgPh.children].forEach(c=>c.classList.remove('selected'));
     setFx('none');
