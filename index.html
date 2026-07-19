@@ -587,6 +587,7 @@
     fx2d.globalAlpha=1;
   }
 
+  const VS=`attribute vec2 aPosition;void main(){gl_Position=vec4(aPosition,0.,1.);}`;
   const FS_THUNDER=`precision mediump float;
 uniform vec2 iResolution;uniform float iTime;uniform vec3 uColor;uniform float uSpeed;
 #define OC 8
