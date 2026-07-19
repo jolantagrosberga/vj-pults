@@ -474,7 +474,20 @@
     if(fxMode==='grid'||fxMode==='dots') fxCanvas.style.opacity=op;
     else if(fxMode==='thunder'||fxMode==='plasma') fxCanvasGL.style.opacity=op;
   });
-  makeSpeedPicker(document.getElementById('fxSpeed'),'med',v=>{fxSpeed=v==='slow'?.5:v==='fast'?2:1;});
+  (function(){
+    const el=document.getElementById('fxSpeed'); el.innerHTML='';
+    [['slow','Lēns'],['fast','Ātrs']].forEach(([v,l],i)=>{
+      const b=document.createElement('div');
+      b.className='speedBtn'+(i===0?' selected':'');
+      b.textContent=l;
+      b.addEventListener('click',()=>{
+        [...el.children].forEach(c=>c.classList.remove('selected'));
+        b.classList.add('selected'); fxSpeed=v==='slow'?.6:1.6;
+      });
+      el.appendChild(b);
+    });
+    fxSpeed=.6;
+  })();
 
   document.querySelectorAll('#fxChoices .choice').forEach(b=>{
     b.addEventListener('click',()=>{
@@ -511,7 +524,7 @@
     const dpr=window.devicePixelRatio||1;
     const W=fxCanvas.width,H=fxCanvas.height;
     const R=Math.max(60,stage.clientWidth*0.32)*dpr;
-    const PULL=0.4*fxSpeed*(1+energy*1.5);
+    const PULL=0.4*fxSpeed;
     fx2d.clearRect(0,0,W,H);
     for(const d of gridDots){
       let ax=(d.hx-d.x)*0.08, ay=(d.hy-d.y)*0.08;
@@ -573,8 +586,8 @@
     const marginX=W*0.08, marginY=H*0.14;
     const stepX=(W-marginX*2)/(cols-1);
     const stepY=(H-marginY*2)/(rows-1);
-    const amp=(6+energy*22);
-    dotCount += 0.06*fxSpeed*(1+energy);
+    const amp=16;
+    dotCount += 0.06*fxSpeed;
     for(const d of dotGrid){
       const wave=Math.sin((d.ix+dotCount)*0.3)+Math.sin((d.iy+dotCount)*0.5);
       const px=marginX+d.ix*stepX;
@@ -682,7 +695,7 @@ gl_FragColor=vec4(col,1.0);}`;
     gl.uniform1f(glUni.time,(performance.now()-glStart)/1000);
     const [r,g,b]=hexRGB(fxColor);
     gl.uniform3f(glUni.col,r/255,g/255,b/255);
-    gl.uniform1f(glUni.spd,fxSpeed*(1+energy*1.2));
+    gl.uniform1f(glUni.spd,fxSpeed);
     gl.drawArrays(gl.TRIANGLES,0,6);
   }
 
